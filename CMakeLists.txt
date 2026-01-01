@@ -14,9 +14,12 @@ ament_export_dependencies(rosidl_default_runtime)
 
 install(PROGRAMS
   scripts/user_controller
-  scripts/obstacle_monitor
+  scripts/safety_detector
+  scripts/rollback_controller
+  scripts/cmd_mux
   DESTINATION lib/${PROJECT_NAME}
 )
+
 
 install(
   DIRECTORY launch

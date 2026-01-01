@@ -2,144 +2,91 @@
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
-from assignment2_rt.srv import GetAverages, SetThreshold
-import time
+from std_msgs.msg import Bool
 
+import sys, termios, tty, select
+
+# This node lets the user choose robot motion and threshold for obstacles
 
 class UserController(Node):
     def __init__(self):
         super().__init__('user_controller')
+        self.get_logger().warn("----- USER CONTROLLER ACTIVE -----")
 
-        # Publisher for robot velocity
-        self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.cmd_pub = self.create_publisher(Twist, '/user_cmd', 10) 
 
-        # Client for threshold service
-        self.set_thr_client = self.create_client(SetThreshold, 'set_threshold')
+        self.safety_lock = False
+        self.create_subscription(Bool, '/safety_lock', self.safety_callback, 10) 
 
-        # Service for averages
-        self.avg_srv = self.create_service(GetAverages, 'get_averages', self.get_avg_callback)
+        self.current_cmd = Twist()
+        self.timer = self.create_timer(0.05, self.publish_cmd)
 
-        # Store last 5 commands
-        self.last_velocities = []
+        # Allows the user to move robot by wasd keys
+        print("\n--- TELEOP ---") 
+        print("w/s/a/d = move")
+        print("x = stop")
+        print("q = quit\n") # NOTE THRESHOLD HAS TO BE CHOSEN HERE BY USER, (not done yet)
 
-        # Start user interface
-        self.user_interface()
+        self.keyboard_loop()
 
-    def change_threshold(self):
-        new_thr = float(input("Insert new threshold: "))
+    # If safety lock is activated by safety detector, teleop has to be disabled
+    def safety_callback(self, msg):
+        self.safety_lock = msg.data
+        if self.safety_lock:
+            print("\n[SAFETY] Rollback active: teleop disabled\n")
+            self.current_cmd = Twist()
 
-        req = SetThreshold.Request()
-        req.new_threshold = new_thr
 
-        future = self.set_thr_client.call_async(req)
-        rclpy.spin_until_future_complete(self, future)
+    # Read a single key without blocking or requiring ENTER.
+    # Switch terminal to raw mode, check for input for 50 ms,
+    # read one character if available, then restore normal settings.
+    def get_key(self):
+        tty.setraw(sys.stdin.fileno())
+        rlist, _, _ = select.select([sys.stdin], [], [], 0.05)
+        key = sys.stdin.read(1) if rlist else None
+        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
+        return key
 
-        if future.result().success:
-            print(f"Threshold changed to {new_thr}")
-        else:
-            print("Failed to change threshold")
-
-    def ask_choice(self):
-        choice = {}
-
-        choice["velocity"] = float(input("Choose velocity: "))
-
-        print("Choose the direction where you want to move the robot:")
-        print("  0 = linear forward")
-        print("  1 = linear backwards")
-        print("  2 = rotation left")
-        print("  3 = rotation right")
-        choice["direction"] = int(input("Direction: "))
-
-        return choice
-
-    def get_avg_callback(self, request, response):
-        if len(self.last_velocities) == 0:
-            response.avg_linear = 0.0
-            response.avg_angular = 0.0
-            return response
-
-        lin = [v[0] for v in self.last_velocities]
-        ang = [v[1] for v in self.last_velocities]
-
-        response.avg_linear = sum(lin) / len(lin)
-        response.avg_angular = sum(ang) / len(ang)
-        return response
-
-    def publish_for_one_second(self, msg):
-        # Publish movement
-        self.cmd_pub.publish(msg)
-
-        # Keep movement for 1 second
-        time.sleep(1.0)
-
-        # Stop robot
-        stop = Twist()
-        self.cmd_pub.publish(stop)
-        print("Robot stopped")
-
-    def user_interface(self):
+    # User choice actions
+    def keyboard_loop(self):
         while rclpy.ok():
-            print("\n--- USER MENU ---")
-            print("1) Move the robot")
-            print("2) Change robot threshold to obstacles")
-            print("3) Get averages")
-            print("4) Quit")
+            key = self.get_key()
+            if key is None:
+                rclpy.spin_once(self)
+                continue
 
-            choice = input("Select option: ")
+            if self.safety_lock:
+                continue
 
-            if choice == "1":
-                c = self.ask_choice()
-                msg = Twist()
-
-                if c["direction"] == 0:
-                    print(f"You chose to move forward, velocity {c['velocity']}")
-                    msg.linear.x = c["velocity"]
-
-                elif c["direction"] == 1:
-                    print(f"You chose to move backwards, velocity {c['velocity']}")
-                    msg.linear.x = -c["velocity"]
-
-                elif c["direction"] == 2:
-                    print(f"You chose to rotate left, angular velocity {c['velocity']}")
-                    msg.angular.z = c["velocity"]
-
-                elif c["direction"] == 3:
-                    print(f"You chose to rotate right, angular velocity {c['velocity']}")
-                    msg.angular.z = -c["velocity"]
-
-                else:
-                    print("Invalid direction")
-                    continue
-
-                # Save last command
-                self.last_velocities.append((msg.linear.x, msg.angular.z))
-                if len(self.last_velocities) > 5:
-                    self.last_velocities.pop(0)
-
-                # Publish for 1 second
-                self.publish_for_one_second(msg)
-
-            elif choice == "2":
-                self.change_threshold()
-
-            elif choice == "3":
-                print("Call the service: ros2 service call /get_averages assignment2_rt/srv/GetAverages")
-
-            elif choice == "4":
-                print("Exit")
+            cmd = Twist()
+            if key == "w":
+                cmd.linear.x = 0.4
+            elif key == "s":
+                cmd.linear.x = -0.4
+            elif key == "a":
+                cmd.angular.z = 1.0
+            elif key == "d":
+                cmd.angular.z = -1.0
+            elif key == "x":
+                cmd = Twist()
+            elif key == "q":
                 break
-
             else:
-                print("Invalid option")
+                continue
 
+            self.current_cmd = cmd
+
+    def publish_cmd(self):
+        self.cmd_pub.publish(self.current_cmd)
 
 def main(args=None):
+    global settings
+    settings = termios.tcgetattr(sys.stdin)
+
     rclpy.init(args=args)
     node = UserController()
     node.destroy_node()
     rclpy.shutdown()
-
 
 if __name__ == '__main__':
     main()
