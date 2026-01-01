@@ -1,12 +1,8 @@
-# Initial user controller node
 #!/usr/bin/env python3
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
-from sensor_msgs.msg import LaserScan
-
 from assignment2_rt.srv import GetAverages, SetThreshold
-from assignment2_rt.msg import ObstacleInfo
 
 
 class UserController(Node):
@@ -16,46 +12,73 @@ class UserController(Node):
         # cmd/vel publisher
         self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
 
-        # Qbstacle info publisher
-        self.obs_pub = self.create_publisher(ObstacleInfo, '/obstacle_info', 10)
-
-        # Laser subscriber
-        self.create_subscription(LaserScan, '/scan', self.laser_callback, 10)
-
-        # Servicies client
-        self.get_avg_client = self.create_client(GetAverages, 'get_averages')
+        # Threshold client
         self.set_thr_client = self.create_client(SetThreshold, 'set_threshold')
 
-        # Initial threshold (has to be modified)
-        self.threshold = 0.5
+        # Average service
+        self.avg_srv = self.create_service(GetAverages, 'get_averages', self.get_avg_callback)
+
+        # Last 5 commands
+        self.last_velocities = []
+
+        # User Interface menu run
+        self.user_interface()
 
 
-    def laser_callback(self, scan):
-        # Laser minimum frontal distance 
-        front_ranges = scan.ranges[len(scan.ranges)//3 : 2*len(scan.ranges)//3]
-        min_front = min(front_ranges)
+# function user choices robot motion: velocities, direction
+    def ask_choice(self):
+        choice = {}
 
-        # Obstacle info publication
-        info = ObstacleInfo()
-        info.min_distance = float(min_front)
-        info.threshold = float(self.threshold)
-        info.is_obstacle = min_front < self.threshold
-        self.obs_pub.publish(info)
+        choice["velocity"] = float(input("Choose velocity: "))
 
-        # Movement based on threshold (has to be modified)
-        if min_front < self.threshold:
-            stop = Twist()
-            self.cmd_pub.publish(stop)
-        else:
-            go = Twist()
-            go.linear.x = 0.2
-            self.cmd_pub.publish(go)
+        print("Choose the direction where you want to move the robot:")
+        print("  0 = linear forward")
+        print("  1 = linear backwards")
+        print("  2 = rotation left")
+        print("  3 = rotation right")
+        choice["direction"] = int(input("Direction: "))
+
+        return choice
+
+
+# User menu interface
+    def user_interface(self):
+        while rclpy.ok():
+            print("1) Move the robot")
+            print("2) Change robot threshold to obstacles")
+            print("3) Get averages")
+            print("4) Quit")
+
+            choice = input("Select option: ")
+
+            if choice == "1":
+                c = self.ask_choice()
+                msg = Twist()
+
+                if c["direction"] == 0:
+                    print(f"You chose to move forward, velocity {c['velocity']}")
+                    msg.linear.x = c["velocity"]
+
+                elif c["direction"] == 1:
+                    print(f"You chose to move backwards, velocity {c['velocity']}")
+                    msg.linear.x = -c["velocity"]
+
+                elif c["direction"] == 2:
+                    print(f"You chose to rotate left, angular velocity {c['velocity']}")
+                    msg.angular.z = c["velocity"]
+
+                elif c["direction"] == 3:
+                    print(f"You chose to rotate right, angular velocity {c['velocity']}")
+                    msg.angular.z = -c["velocity"]
+
+                else:
+                    print("Invalid direction")
+                    continue
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = UserController()
-    rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
 
