@@ -10,9 +10,11 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/GetAverages.srv"
   "srv/SetThreshold.srv"
 )
+ament_export_dependencies(rosidl_default_runtime)
 
 install(PROGRAMS
-  scripts/user_controller.py
+  scripts/user_controller
+  scripts/obstacle_monitor
   DESTINATION lib/${PROJECT_NAME}
 )
 

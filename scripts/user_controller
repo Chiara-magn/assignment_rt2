@@ -3,29 +3,42 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from assignment2_rt.srv import GetAverages, SetThreshold
+import time
 
 
 class UserController(Node):
     def __init__(self):
         super().__init__('user_controller')
 
-        # cmd/vel publisher
+        # Publisher for robot velocity
         self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
 
-        # Threshold client
+        # Client for threshold service
         self.set_thr_client = self.create_client(SetThreshold, 'set_threshold')
 
-        # Average service
+        # Service for averages
         self.avg_srv = self.create_service(GetAverages, 'get_averages', self.get_avg_callback)
 
-        # Last 5 commands
+        # Store last 5 commands
         self.last_velocities = []
 
-        # User Interface menu run
+        # Start user interface
         self.user_interface()
 
+    def change_threshold(self):
+        new_thr = float(input("Insert new threshold: "))
 
-# function user choices robot motion: velocities, direction
+        req = SetThreshold.Request()
+        req.new_threshold = new_thr
+
+        future = self.set_thr_client.call_async(req)
+        rclpy.spin_until_future_complete(self, future)
+
+        if future.result().success:
+            print(f"Threshold changed to {new_thr}")
+        else:
+            print("Failed to change threshold")
+
     def ask_choice(self):
         choice = {}
 
@@ -40,10 +53,34 @@ class UserController(Node):
 
         return choice
 
+    def get_avg_callback(self, request, response):
+        if len(self.last_velocities) == 0:
+            response.avg_linear = 0.0
+            response.avg_angular = 0.0
+            return response
 
-# User menu interface
+        lin = [v[0] for v in self.last_velocities]
+        ang = [v[1] for v in self.last_velocities]
+
+        response.avg_linear = sum(lin) / len(lin)
+        response.avg_angular = sum(ang) / len(ang)
+        return response
+
+    def publish_for_one_second(self, msg):
+        # Publish movement
+        self.cmd_pub.publish(msg)
+
+        # Keep movement for 1 second
+        time.sleep(1.0)
+
+        # Stop robot
+        stop = Twist()
+        self.cmd_pub.publish(stop)
+        print("Robot stopped")
+
     def user_interface(self):
         while rclpy.ok():
+            print("\n--- USER MENU ---")
             print("1) Move the robot")
             print("2) Change robot threshold to obstacles")
             print("3) Get averages")
@@ -74,6 +111,27 @@ class UserController(Node):
                 else:
                     print("Invalid direction")
                     continue
+
+                # Save last command
+                self.last_velocities.append((msg.linear.x, msg.angular.z))
+                if len(self.last_velocities) > 5:
+                    self.last_velocities.pop(0)
+
+                # Publish for 1 second
+                self.publish_for_one_second(msg)
+
+            elif choice == "2":
+                self.change_threshold()
+
+            elif choice == "3":
+                print("Call the service: ros2 service call /get_averages assignment2_rt/srv/GetAverages")
+
+            elif choice == "4":
+                print("Exit")
+                break
+
+            else:
+                print("Invalid option")
 
 
 def main(args=None):
