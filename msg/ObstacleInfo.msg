@@ -1,0 +1,4 @@
+bool is_obstacle
+float32 min_distance
+string direction
+float32 threshold
