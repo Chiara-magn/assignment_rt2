@@ -4,6 +4,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, Float32
 from assignment2_rt.srv import SetThreshold
+from assignment2_rt.msg import ObstacleInfo
 
 # This node detects when obstacles threshold are violated
 
@@ -15,10 +16,20 @@ class SafetyDetector(Node):
         self.threshold = 0.5  # soft threshold
         self.srv = self.create_service(SetThreshold, 'set_threshold', self.set_threshold_callback)
 
+        self.info_pub = self.create_publisher(ObstacleInfo, '/obstacle_info', 10)
+
         self.safety_pub = self.create_publisher(Bool, '/safety_lock', 10)
         self.min_pub = self.create_publisher(Float32, '/min_distance', 10)
 
         self.create_subscription(LaserScan, '/scan', self.laser_callback, 10)
+
+    
+    def set_threshold_callback(self, request, response):
+        self.threshold = float(request.threshold)
+        self.get_logger().warn(f"Threshold updated to {self.threshold:.2f} m")
+        response.success = True
+        response.new_threshold = self.threshold
+        return response
 
     def laser_callback(self, scan):
         clean = [r for r in scan.ranges if r > 0.01]
@@ -28,9 +39,17 @@ class SafetyDetector(Node):
         min_dist = min(clean)
         self.min_pub.publish(Float32(data=min_dist))
 
+        # Prepare ObstacleInfo message (will be published in all cases)
+        info = ObstacleInfo()
+        info.min_distance = min_dist
+        info.threshold = self.threshold
+        info.is_obstacle = min_dist < self.threshold
+        info.direction = self.get_direction(scan)
+
         # HARD STOP (needed to prevent obstacle hits)
         if min_dist < 0.10:
             self.safety_pub.publish(Bool(data=True))
+            self.info_pub.publish(info)   
             return
 
         # SOFT STOP (this threshold can be imposed by the user)
@@ -38,13 +57,24 @@ class SafetyDetector(Node):
             self.safety_pub.publish(Bool(data=True))
         else:
             self.safety_pub.publish(Bool(data=False))
+        
+        # Publish obstacle info in normal conditions
+        self.info_pub.publish(info)
 
-    def set_threshold_callback(self, request, response):
-        self.threshold = float(request.threshold)
-        self.get_logger().warn(f"Threshold updated to {self.threshold:.2f} m")
-        response.success = True
-        response.new_threshold = self.threshold
-        return response
+
+    def get_direction(self, scan):
+        n = len(scan.ranges)
+        left = min([r for r in scan.ranges[int(2*n/3):] if r > 0.01], default=99)
+        front = min([r for r in scan.ranges[int(n/3):int(2*n/3)] if r > 0.01], default=99)
+        right = min([r for r in scan.ranges[:int(n/3)] if r > 0.01], default=99)
+
+        m = min(left, front, right)
+        if m == left:
+            return "left"
+        elif m == front:
+            return "front"
+        else:
+            return "right"
 
 def main(args=None):
     rclpy.init(args=args)
