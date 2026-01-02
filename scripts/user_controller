@@ -3,7 +3,7 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from std_msgs.msg import Bool
-from assignment2_rt.srv import SetThreshold
+from assignment2_rt.srv import SetThreshold, GetAverages
 import sys, termios, tty, select
 
 # This node lets the user choose robot motion and threshold for obstacles
@@ -13,39 +13,41 @@ class UserController(Node):
         super().__init__('user_controller')
         self.get_logger().warn("----- USER CONTROLLER ACTIVE -----")
 
-        self.cmd_pub = self.create_publisher(Twist, '/user_cmd', 10) 
+        self.cmd_pub = self.create_publisher(Twist, '/user_cmd', 10)
 
+        # --- SERVICE CLIENTS ---
         self.threshold_client = self.create_client(SetThreshold, 'set_threshold')
+        self.avg_client = self.create_client(GetAverages, 'get_averages')
 
         while not self.threshold_client.wait_for_service(timeout_sec=1.0):
             self.get_logger().warn("Waiting for SetThreshold service...")
 
+        while not self.avg_client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().warn("Waiting for GetAverages service...")
+
+        # --- SAFETY LOCK ---
         self.safety_lock = False
-        self.create_subscription(Bool, '/safety_lock', self.safety_callback, 10) 
+        self.create_subscription(Bool, '/safety_lock', self.safety_callback, 10)
 
         self.current_cmd = Twist()
         self.timer = self.create_timer(0.05, self.publish_cmd)
 
-        # Allows the user to move robot by wasd keys
-        print("\n--- TELEOP ---") 
+        # --- MENU ---
+        print("\n--- TELEOP ---")
         print("w/s/a/d = move")
         print("x = stop")
         print("t = set new threshold")
-        print("q = quit\n") 
+        print("m = get averages")
+        print("q = quit\n")
 
         self.keyboard_loop()
 
-    # If safety lock is activated by safety detector, teleop has to be disabled
     def safety_callback(self, msg):
         self.safety_lock = msg.data
         if self.safety_lock:
             print("\n[SAFETY] Rollback active: teleop disabled\n")
             self.current_cmd = Twist()
 
-
-    # Read a single key without blocking or requiring ENTER.
-    # Switch terminal to raw mode, check for input for 50 ms,
-    # read one character if available, then restore normal settings.
     def get_key(self):
         tty.setraw(sys.stdin.fileno())
         rlist, _, _ = select.select([sys.stdin], [], [], 0.05)
@@ -53,7 +55,6 @@ class UserController(Node):
         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
         return key
 
-    # User choice actions
     def keyboard_loop(self):
         while rclpy.ok():
             key = self.get_key()
@@ -65,6 +66,7 @@ class UserController(Node):
                 continue
 
             cmd = Twist()
+
             if key == "w":
                 cmd.linear.x = 0.4
             elif key == "s":
@@ -75,6 +77,8 @@ class UserController(Node):
                 cmd.angular.z = -1.0
             elif key == "x":
                 cmd = Twist()
+
+            # --- SET THRESHOLD ---
             elif key == 't':
                 try:
                     new_thr = float(input("Enter new threshold: "))
@@ -94,6 +98,22 @@ class UserController(Node):
 
                 except ValueError:
                     self.get_logger().error("Invalid threshold value")
+
+            # --- GET AVERAGES ---
+            elif key == 'm':
+                req = GetAverages.Request()
+                future = self.avg_client.call_async(req)
+
+                def callback(fut):
+                    try:
+                        resp = fut.result()
+                        print(f"\nAverage linear:  {resp.avg_linear:.3f}")
+                        print(f"Average angular: {resp.avg_angular:.3f}\n")
+                    except Exception as e:
+                        print(f"Service call failed: {e}")
+
+                future.add_done_callback(callback)
+
             elif key == "q":
                 break
             else:
