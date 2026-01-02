@@ -6,8 +6,6 @@ from std_msgs.msg import Bool
 from assignment2_rt.srv import SetThreshold, GetAverages
 import sys, termios, tty, select
 
-# This node lets the user choose robot motion and threshold for obstacles
-
 class UserController(Node):
     def __init__(self):
         super().__init__('user_controller')
@@ -15,7 +13,7 @@ class UserController(Node):
 
         self.cmd_pub = self.create_publisher(Twist, '/user_cmd', 10)
 
-        # --- SERVICE CLIENTS ---
+        # --- service clients ---
         self.threshold_client = self.create_client(SetThreshold, 'set_threshold')
         self.avg_client = self.create_client(GetAverages, 'get_averages')
 
@@ -25,18 +23,23 @@ class UserController(Node):
         while not self.avg_client.wait_for_service(timeout_sec=1.0):
             self.get_logger().warn("Waiting for GetAverages service...")
 
-        # --- SAFETY LOCK ---
+        # --- safety lock ---
         self.safety_lock = False
         self.create_subscription(Bool, '/safety_lock', self.safety_callback, 10)
+
+        # --- user defined velocities ---
+        self.v_lin = 0.4
+        self.v_ang = 1.0
 
         self.current_cmd = Twist()
         self.timer = self.create_timer(0.05, self.publish_cmd)
 
-        # --- MENU ---
+        # --- user menu ---
         print("\n--- TELEOP ---")
         print("w/s/a/d = move")
         print("x = stop")
         print("t = set new threshold")
+        print("v = set linear/angular velocity")
         print("m = get averages")
         print("q = quit\n")
 
@@ -67,18 +70,19 @@ class UserController(Node):
 
             cmd = Twist()
 
+            # --- set motion ---
             if key == "w":
-                cmd.linear.x = 0.4
+                cmd.linear.x = self.v_lin
             elif key == "s":
-                cmd.linear.x = -0.4
+                cmd.linear.x = -self.v_lin
             elif key == "a":
-                cmd.angular.z = 1.0
+                cmd.angular.z = self.v_ang
             elif key == "d":
-                cmd.angular.z = -1.0
+                cmd.angular.z = -self.v_ang
             elif key == "x":
                 cmd = Twist()
 
-            # --- SET THRESHOLD ---
+            # --- set threshold ---
             elif key == 't':
                 try:
                     new_thr = float(input("Enter new threshold: "))
@@ -99,7 +103,18 @@ class UserController(Node):
                 except ValueError:
                     self.get_logger().error("Invalid threshold value")
 
-            # --- GET AVERAGES ---
+            # --- set velocities ---
+            elif key == 'v':
+                try:
+                    new_lin = float(input("Enter new linear velocity: "))
+                    new_ang = float(input("Enter new angular velocity: "))
+                    self.v_lin = new_lin
+                    self.v_ang = new_ang
+                    print(f"Updated velocities: lin={self.v_lin}, ang={self.v_ang}")
+                except ValueError:
+                    self.get_logger().error("Invalid velocity value")
+
+            # --- get averages ---
             elif key == 'm':
                 req = GetAverages.Request()
                 future = self.avg_client.call_async(req)
@@ -125,13 +140,13 @@ class UserController(Node):
         self.cmd_pub.publish(self.current_cmd)
 
 def main(args=None):
-    global settings
-    settings = termios.tcgetattr(sys.stdin)
+        global settings
+        settings = termios.tcgetattr(sys.stdin)
 
-    rclpy.init(args=args)
-    node = UserController()
-    node.destroy_node()
-    rclpy.shutdown()
+        rclpy.init(args=args)
+        node = UserController()
+        node.destroy_node()
+        rclpy.shutdown()
 
 if __name__ == '__main__':
-    main()
+        main()
