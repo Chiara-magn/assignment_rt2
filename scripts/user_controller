@@ -3,7 +3,7 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from std_msgs.msg import Bool
-
+from assignment2_rt.srv import SetThreshold
 import sys, termios, tty, select
 
 # This node lets the user choose robot motion and threshold for obstacles
@@ -15,6 +15,11 @@ class UserController(Node):
 
         self.cmd_pub = self.create_publisher(Twist, '/user_cmd', 10) 
 
+        self.threshold_client = self.create_client(SetThreshold, 'set_threshold')
+
+        while not self.threshold_client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().warn("Waiting for SetThreshold service...")
+
         self.safety_lock = False
         self.create_subscription(Bool, '/safety_lock', self.safety_callback, 10) 
 
@@ -25,7 +30,8 @@ class UserController(Node):
         print("\n--- TELEOP ---") 
         print("w/s/a/d = move")
         print("x = stop")
-        print("q = quit\n") # NOTE THRESHOLD HAS TO BE CHOSEN HERE BY USER, (not done yet)
+        print("t = set new threshold")
+        print("q = quit\n") 
 
         self.keyboard_loop()
 
@@ -69,6 +75,25 @@ class UserController(Node):
                 cmd.angular.z = -1.0
             elif key == "x":
                 cmd = Twist()
+            elif key == 't':
+                try:
+                    new_thr = float(input("Enter new threshold: "))
+                    req = SetThreshold.Request()
+                    req.threshold = new_thr
+
+                    future = self.threshold_client.call_async(req)
+
+                    def callback(fut):
+                        try:
+                            resp = fut.result()
+                            print(f"Threshold updated to {resp.new_threshold}")
+                        except Exception as e:
+                            print(f"Service call failed: {e}")
+
+                    future.add_done_callback(callback)
+
+                except ValueError:
+                    self.get_logger().error("Invalid threshold value")
             elif key == "q":
                 break
             else:

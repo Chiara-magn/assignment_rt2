@@ -3,6 +3,7 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, Float32
+from assignment2_rt.srv import SetThreshold
 
 # This node detects when obstacles threshold are violated
 
@@ -12,6 +13,7 @@ class SafetyDetector(Node):
         self.get_logger().warn("----- SAFETY DETECTOR ACTIVE -----")
 
         self.threshold = 0.5  # soft threshold
+        self.srv = self.create_service(SetThreshold, 'set_threshold', self.set_threshold_callback)
 
         self.safety_pub = self.create_publisher(Bool, '/safety_lock', 10)
         self.min_pub = self.create_publisher(Float32, '/min_distance', 10)
@@ -37,12 +39,20 @@ class SafetyDetector(Node):
         else:
             self.safety_pub.publish(Bool(data=False))
 
+    def set_threshold_callback(self, request, response):
+        self.threshold = float(request.threshold)
+        self.get_logger().warn(f"Threshold updated to {self.threshold:.2f} m")
+        response.success = True
+        response.new_threshold = self.threshold
+        return response
+
 def main(args=None):
     rclpy.init(args=args)
     node = SafetyDetector()
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()
